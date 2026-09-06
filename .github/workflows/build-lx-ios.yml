@@ -1,6 +1,12 @@
 name: Build LX iOS import repair
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-lx-ios.yml'
+      - 'patches/**'
+      - 'scripts/**'
   workflow_dispatch:
 
 permissions:

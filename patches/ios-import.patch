@@ -201,7 +201,7 @@ index 0000000..e533b3e
 +
 +@end
 diff --git a/src/components/common/ChoosePath/index.tsx b/src/components/common/ChoosePath/index.tsx
-index ac369f2..d9e2e95 100644
+index ac369f2..9bd6a85 100644
 --- a/src/components/common/ChoosePath/index.tsx
 +++ b/src/components/common/ChoosePath/index.tsx
 @@ -1,4 +1,5 @@
@@ -219,19 +219,25 @@ index ac369f2..d9e2e95 100644
          // if (options.isPersist) {
          void handleOpenExternalStorage(options)
          // } else {
-@@ -77,6 +78,10 @@ export default forwardRef<ChoosePathType, ChoosePathProps>(({
-         }).catch(err => {
+@@ -74,9 +75,14 @@ export default forwardRef<ChoosePathType, ChoosePathProps>(({
+             return
+           }
+           onConfirm(file.data)
+-        }).catch(err => {
++        }).catch((err: unknown) => {
            if (isUnmounted.current) return
-           log.warn('open document failed: ' + err.message)
+-          log.warn('open document failed: ' + err.message)
++          const message = err instanceof Error ? err.message : String(err)
++          log.warn('open document failed: ' + message)
 +          if (Platform.OS == 'ios') {
-+            toast(err.message, 'long')
++            toast(message, 'long')
 +            return
 +          }
            void confirmDialog({
              message: t('storage_file_no_select_file_failed_tip'),
              bgClose: false,
 diff --git a/src/utils/fs.ts b/src/utils/fs.ts
-index c0917d1..1c2ac0a 100644
+index c0917d1..78b4fe4 100644
 --- a/src/utils/fs.ts
 +++ b/src/utils/fs.ts
 @@ -1,5 +1,6 @@
@@ -242,10 +248,12 @@ index c0917d1..1c2ac0a 100644
  import type {
    FileType,
    OpenDocumentOptions,
-@@ -36,6 +37,13 @@ export const selectManagedFolder = async(isPersist: boolean = false) => {
+@@ -35,9 +36,16 @@ export const selectManagedFolder = async(isPersist: boolean = false) => {
+   if (!AndroidScoped?.openDocumentTree) return null
    return AndroidScoped.openDocumentTree(isPersist)
  }
- export const selectFile = async(options: OpenDocumentOptions) => {
+-export const selectFile = async(options: OpenDocumentOptions) => {
++export const selectFile = async(options: OpenDocumentOptions): Promise<FileType | null> => {
 +  if (isIOS) {
 +    const picker = NativeModules.LXDocumentPicker as undefined | {
 +      openDocument: (directory: string) => Promise<FileType | null>
@@ -254,8 +262,11 @@ index c0917d1..1c2ac0a 100644
 +    return picker.openDocument(options.toPath ?? `${RNFS.CachesDirectoryPath}/imports`)
 +  }
    if (!AndroidScoped?.openDocument) return null
-   return AndroidScoped.openDocument(options)
+-  return AndroidScoped.openDocument(options)
++  return AndroidScoped.openDocument(options) as Promise<FileType | null>
  }
+ export const removeManagedFolder = async(path: string) => {
+   if (!AndroidScoped?.releasePersistableUriPermission) return
 @@ -55,7 +63,20 @@ export const getPersistedUriList = async() => {
  
  
