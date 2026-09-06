@@ -1,0 +1,112 @@
+name: Build LX iOS import repair
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      NO_FLIPPER: '1'
+      RCT_NEW_ARCH_ENABLED: '0'
+    steps:
+      - name: Check out repair kit
+        uses: actions/checkout@v4
+        with:
+          path: repair-kit
+          persist-credentials: false
+
+      - name: Check out the reviewed LX iOS source
+        uses: actions/checkout@v4
+        with:
+          repository: ashimjenning/lx-music-mobile
+          ref: eb382002225bdc7ee404cf99f27f59685cc95a79
+          path: lx
+          persist-credentials: false
+
+      - name: Apply import repair
+        working-directory: lx
+        run: |
+          git apply --check ../repair-kit/patches/ios-import.patch
+          git apply ../repair-kit/patches/ios-import.patch
+          git diff --check
+          xcodebuild -version
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install JavaScript dependencies
+        working-directory: lx
+        run: npm ci
+
+      - name: Check import logic and bundle the iOS JavaScript
+        working-directory: lx
+        run: |
+          node ../repair-kit/scripts/test-import.cjs . node_modules/pako/dist/pako.js
+          ./node_modules/.bin/eslint src/utils/fs.ts src/utils/iosCompression.js src/components/common/ChoosePath/index.tsx
+          mkdir -p build/bundle-check
+          ./node_modules/.bin/react-native bundle --platform ios --dev false --entry-file index.js --bundle-output build/bundle-check/main.jsbundle --assets-dest build/bundle-check
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install CocoaPods dependencies
+        working-directory: lx/ios
+        run: |
+          gem install cocoapods -v 1.16.2 --no-document
+          pod _1.16.2_ install
+
+      - name: Build for a physical iPhone without signing
+        working-directory: lx
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/LxMusicMobile.xcworkspace \
+            -scheme LxMusicMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            build 2>&1 | tee build/xcodebuild.log
+
+      - name: Package unsigned IPA
+        working-directory: lx
+        run: |
+          APP=build/DerivedData/Build/Products/Release-iphoneos/LxMusicMobile.app
+          test -d "$APP"
+          test -s "$APP/main.jsbundle"
+          mkdir -p build/ipa/Payload
+          ditto "$APP" build/ipa/Payload/LxMusicMobile.app
+          cd build/ipa
+          /usr/bin/zip -qry ../LXMusic-iOS-import-repair-unsigned.ipa Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-iOS-import-repair-unsigned
+          path: lx/build/LXMusic-iOS-import-repair-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: lx/build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
