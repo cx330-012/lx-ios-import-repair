@@ -1,0 +1,321 @@
+diff --git a/ios/LxMusicMobile.xcodeproj/project.pbxproj b/ios/LxMusicMobile.xcodeproj/project.pbxproj
+index 87905a7..4200183 100644
+--- a/ios/LxMusicMobile.xcodeproj/project.pbxproj
++++ b/ios/LxMusicMobile.xcodeproj/project.pbxproj
+@@ -7,6 +7,7 @@
+ 	objects = {
+ 
+ /* Begin PBXBuildFile section */
++		A92609060000000000000001 /* LXDocumentPicker.m in Sources */ = {isa = PBXBuildFile; fileRef = A92609060000000000000002 /* LXDocumentPicker.m */; };
+ 		00E356F31AD99517003FC87E /* LxMusicMobileTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* LxMusicMobileTests.m */; };
+ 		0C80B921A6F3F58F76C31292 /* libPods-LxMusicMobile.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-LxMusicMobile.a */; };
+ 		13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB01A68108700A75B9A /* AppDelegate.mm */; };
+@@ -35,6 +36,7 @@
+ /* End PBXContainerItemProxy section */
+ 
+ /* Begin PBXFileReference section */
++		A92609060000000000000002 /* LXDocumentPicker.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = LXDocumentPicker.m; path = LxMusicMobile/LXDocumentPicker.m; sourceTree = "<group>"; };
+ 		00E356EE1AD99517003FC87E /* LxMusicMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LxMusicMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		00E356F11AD99517003FC87E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+ 		00E356F21AD99517003FC87E /* LxMusicMobileTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LxMusicMobileTests.m; sourceTree = "<group>"; };
+@@ -105,6 +107,7 @@
+ 		13B07FAE1A68108700A75B9A /* LxMusicMobile */ = {
+ 			isa = PBXGroup;
+ 			children = (
++				A92609060000000000000002 /* LXDocumentPicker.m */,
+ 				13B07FAF1A68108700A75B9A /* AppDelegate.h */,
+ 				13B07FB01A68108700A75B9A /* AppDelegate.mm */,
+ 				2C7000011C1D100000000002 /* CryptoModule.h */,
+@@ -438,6 +441,7 @@
+ 			isa = PBXSourcesBuildPhase;
+ 			buildActionMask = 2147483647;
+ 			files = (
++				A92609060000000000000001 /* LXDocumentPicker.m in Sources */,
+ 				13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */,
+ 				2C7000011C1D100000000001 /* CryptoModule.mm in Sources */,
+ 				3E3A10001C1D100000000001 /* UserApiModule.mm in Sources */,
+diff --git a/ios/LxMusicMobile/LXDocumentPicker.m b/ios/LxMusicMobile/LXDocumentPicker.m
+new file mode 100644
+index 0000000..e533b3e
+--- /dev/null
++++ b/ios/LxMusicMobile/LXDocumentPicker.m
+@@ -0,0 +1,160 @@
++#import <React/RCTBridgeModule.h>
++#import <React/RCTUtils.h>
++#import <UIKit/UIKit.h>
++
++// Import a user-selected document into the app's cache before JS reads it.
++// The Android storage module used by LX is intentionally not linked on iOS.
++@interface LXDocumentPicker : NSObject <RCTBridgeModule, UIDocumentPickerDelegate>
++@property(nonatomic, copy) RCTPromiseResolveBlock pendingResolve;
++@property(nonatomic, copy) RCTPromiseRejectBlock pendingReject;
++@property(nonatomic, copy) NSString *importDirectory;
++@property(nonatomic, strong) UIDocumentPickerViewController *picker;
++@end
++
++@implementation LXDocumentPicker
++
++RCT_EXPORT_MODULE(LXDocumentPicker)
++
+++ (BOOL)requiresMainQueueSetup
++{
++  return YES;
++}
++
++- (dispatch_queue_t)methodQueue
++{
++  return dispatch_get_main_queue();
++}
++
++- (void)clearPending
++{
++  self.pendingResolve = nil;
++  self.pendingReject = nil;
++  self.importDirectory = nil;
++  self.picker = nil;
++}
++
++- (void)finishWithResult:(id)result
++{
++  RCTPromiseResolveBlock resolve = self.pendingResolve;
++  [self clearPending];
++  if (resolve) resolve(result);
++}
++
++- (void)finishWithError:(NSError *)error
++{
++  RCTPromiseRejectBlock reject = self.pendingReject;
++  [self clearPending];
++  if (reject) reject(@"E_DOCUMENT_IMPORT", error.localizedDescription, error);
++}
++
++RCT_REMAP_METHOD(openDocument,
++                 openDocumentInDirectory:(NSString *)directory
++                 resolver:(RCTPromiseResolveBlock)resolve
++                 rejecter:(RCTPromiseRejectBlock)reject)
++{
++  if (self.pendingResolve) {
++    reject(@"E_DOCUMENT_BUSY", @"A document picker is already open.", nil);
++    return;
++  }
++  UIViewController *presenter = RCTPresentedViewController();
++  if (!presenter || !presenter.view.window || presenter.isBeingDismissed) {
++    reject(@"E_DOCUMENT_PRESENT", @"Cannot open the document picker. Please try again.", nil);
++    return;
++  }
++
++  self.pendingResolve = resolve;
++  self.pendingReject = reject;
++  self.importDirectory = directory;
++  // public.data includes custom .lxmc and .js files. LX validates extensions
++  // after selection so unregistered custom extensions remain selectable.
++  self.picker = [[UIDocumentPickerViewController alloc]
++    initWithDocumentTypes:@[@"public.data"] inMode:UIDocumentPickerModeOpen];
++  self.picker.delegate = self;
++  self.picker.allowsMultipleSelection = NO;
++  self.picker.modalPresentationStyle = UIModalPresentationFullScreen;
++  @try {
++    [presenter presentViewController:self.picker animated:YES completion:nil];
++  } @catch (NSException *exception) {
++    NSError *error = [NSError errorWithDomain:@"LXDocumentPicker" code:1
++      userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"Cannot open document picker."}];
++    [self finishWithError:error];
++  }
++}
++
++- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
++{
++  [controller dismissViewControllerAnimated:YES completion:^{
++    [self finishWithResult:nil];
++  }];
++}
++
++- (void)documentPicker:(UIDocumentPickerViewController *)controller
++ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
++{
++  NSURL *source = urls.firstObject;
++  if (!source) {
++    [self documentPickerWasCancelled:controller];
++    return;
++  }
++  NSString *directory = [self.importDirectory copy];
++  [controller dismissViewControllerAnimated:YES completion:^{
++    // Coordination allows Files/iCloud providers to make the content available.
++    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
++      BOOL scoped = [source startAccessingSecurityScopedResource];
++      NSFileManager *manager = [NSFileManager defaultManager];
++      NSString *folder = [directory stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
++      __block NSString *copiedPath = nil;
++      __block NSDictionary *attributes = nil;
++      __block NSError *copyError = nil;
++      NSError *coordinationError = nil;
++
++      if ([manager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&copyError]) {
++        NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
++        [coordinator coordinateReadingItemAtURL:source options:0 error:&coordinationError
++          byAccessor:^(NSURL *readURL) {
++            NSNumber *isDirectory = nil;
++            if (![readURL getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:&copyError]) return;
++            if (isDirectory.boolValue) {
++              copyError = [NSError errorWithDomain:@"LXDocumentPicker" code:2
++                userInfo:@{NSLocalizedDescriptionKey: @"Please select a file, not a folder."}];
++              return;
++            }
++            NSString *name = source.lastPathComponent;
++            if (!name.length) name = @"import";
++            NSString *destination = [folder stringByAppendingPathComponent:name];
++            if ([manager copyItemAtURL:readURL toURL:[NSURL fileURLWithPath:destination] error:&copyError]) {
++              copiedPath = destination;
++              attributes = [manager attributesOfItemAtPath:destination error:&copyError];
++            }
++          }];
++      }
++      if (scoped) [source stopAccessingSecurityScopedResource];
++
++      NSError *error = coordinationError ?: copyError;
++      if (!copiedPath && !error) {
++        error = [NSError errorWithDomain:@"LXDocumentPicker" code:3
++          userInfo:@{NSLocalizedDescriptionKey: @"The selected file could not be read."}];
++      }
++      if (error) {
++        [manager removeItemAtPath:folder error:nil];
++        dispatch_async(dispatch_get_main_queue(), ^{ [self finishWithError:error]; });
++        return;
++      }
++      NSDate *modified = attributes[NSFileModificationDate];
++      NSDictionary *result = @{
++        @"name": copiedPath.lastPathComponent,
++        @"path": copiedPath,
++        @"data": copiedPath,
++        @"isDirectory": @NO,
++        @"isFile": @YES,
++        @"canRead": @YES,
++        @"mimeType": @"application/octet-stream",
++        @"size": attributes[NSFileSize] ?: @0,
++        @"lastModified": @(modified ? modified.timeIntervalSince1970 * 1000 : 0),
++      };
++      dispatch_async(dispatch_get_main_queue(), ^{ [self finishWithResult:result]; });
++    });
++  }];
++}
++
++@end
+diff --git a/src/components/common/ChoosePath/index.tsx b/src/components/common/ChoosePath/index.tsx
+index ac369f2..d9e2e95 100644
+--- a/src/components/common/ChoosePath/index.tsx
++++ b/src/components/common/ChoosePath/index.tsx
+@@ -1,4 +1,5 @@
+ import { useState, useRef, forwardRef, useImperativeHandle } from 'react'
++import { Platform } from 'react-native'
+ // import { StyleSheet, View, Text, StatusBar, ScrollView } from 'react-native'
+ 
+ // import { useGetter, useDispatch } from '@/store'
+@@ -52,7 +53,7 @@ export default forwardRef<ChoosePathType, ChoosePathProps>(({
+ 
+   useImperativeHandle(ref, () => ({
+     show(options) {
+-      if (!settingState.setting['common.useSystemFileSelector'] || options.dirOnly) {
++      if ((Platform.OS != 'ios' && !settingState.setting['common.useSystemFileSelector']) || options.dirOnly) {
+         // if (options.isPersist) {
+         void handleOpenExternalStorage(options)
+         // } else {
+@@ -77,6 +78,10 @@ export default forwardRef<ChoosePathType, ChoosePathProps>(({
+         }).catch(err => {
+           if (isUnmounted.current) return
+           log.warn('open document failed: ' + err.message)
++          if (Platform.OS == 'ios') {
++            toast(err.message, 'long')
++            return
++          }
+           void confirmDialog({
+             message: t('storage_file_no_select_file_failed_tip'),
+             bgClose: false,
+diff --git a/src/utils/fs.ts b/src/utils/fs.ts
+index c0917d1..1c2ac0a 100644
+--- a/src/utils/fs.ts
++++ b/src/utils/fs.ts
+@@ -1,5 +1,6 @@
+-import { Platform } from 'react-native'
++import { NativeModules, Platform } from 'react-native'
+ import RNFS from 'react-native-fs'
++import { gzipBase64, ungzipBase64 } from './iosCompression'
+ import type {
+   FileType,
+   OpenDocumentOptions,
+@@ -36,6 +37,13 @@ export const selectManagedFolder = async(isPersist: boolean = false) => {
+   return AndroidScoped.openDocumentTree(isPersist)
+ }
+ export const selectFile = async(options: OpenDocumentOptions) => {
++  if (isIOS) {
++    const picker = NativeModules.LXDocumentPicker as undefined | {
++      openDocument: (directory: string) => Promise<FileType | null>
++    }
++    if (!picker?.openDocument) throw new Error('iOS document picker is missing. Rebuild the app with LXDocumentPicker.m.')
++    return picker.openDocument(options.toPath ?? `${RNFS.CachesDirectoryPath}/imports`)
++  }
+   if (!AndroidScoped?.openDocument) return null
+   return AndroidScoped.openDocument(options)
+ }
+@@ -55,7 +63,20 @@ export const getPersistedUriList = async() => {
+ 
+ 
+ export const readDir = async(path: string) => {
+-  if (isIOS) return RNFS.readDir(path)
++  if (isIOS) {
++    const entries = await RNFS.readDir(path)
++    return entries.map(entry => ({
++      name: entry.name,
++      path: entry.path,
++      isDirectory: entry.isDirectory(),
++      isFile: entry.isFile(),
++      lastModified: entry.mtime?.getTime() ?? 0,
++      canRead: true,
++      data: '',
++      mimeType: '',
++      size: entry.size,
++    }))
++  }
+   return FileSystem.ls(path)
+ }
+ 
+@@ -102,11 +123,19 @@ export const moveFile = async(fromPath: string, toPath: string) => {
+   return FileSystem.mv(fromPath, toPath)
+ }
+ export const gzipFile = async(fromPath: string, toPath: string) => {
+-  if (isIOS) throw new Error('gzipFile is not supported on iOS')
++  if (isIOS) {
++    const data = await RNFS.readFile(fromPath, 'base64')
++    await RNFS.writeFile(toPath, gzipBase64(data), 'base64')
++    return
++  }
+   return FileSystem.gzipFile(fromPath, toPath)
+ }
+ export const unGzipFile = async(fromPath: string, toPath: string) => {
+-  if (isIOS) throw new Error('unGzipFile is not supported on iOS')
++  if (isIOS) {
++    const data = await RNFS.readFile(fromPath, 'base64')
++    await RNFS.writeFile(toPath, ungzipBase64(data), 'base64')
++    return
++  }
+   return FileSystem.unGzipFile(fromPath, toPath)
+ }
+ export const gzipString = async(data: string, encoding?: Encoding) => {
+diff --git a/src/utils/iosCompression.js b/src/utils/iosCompression.js
+new file mode 100644
+index 0000000..2dad7c0
+--- /dev/null
++++ b/src/utils/iosCompression.js
+@@ -0,0 +1,13 @@
++import { Buffer } from '@craftzdog/react-native-buffer'
++import { gzip, ungzip } from 'pako'
++
++// Keep bytes in base64 across the RNFS bridge, including non-ASCII backups.
++export const gzipBase64 = data => Buffer.from(gzip(Buffer.from(data, 'base64'))).toString('base64')
++
++export const ungzipBase64 = data => {
++  try {
++    return Buffer.from(ungzip(Buffer.from(data, 'base64'))).toString('base64')
++  } catch (error) {
++    throw new Error(`Unable to decompress backup: ${String(error)}`)
++  }
++}
